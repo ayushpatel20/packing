@@ -1,0 +1,102 @@
+name: Automated cPanel FTP Deployment
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    name: 🚀 Deploy Website
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚚 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for git-ftp / change detection
+
+      - name: 🔍 Check for Build Requirements (Node.js)
+        id: check_build
+        run: |
+          if [ -f "package.json" ]; then
+            echo "has_package=true" >> $GITHUB_OUTPUT
+            echo "Node.js project detected."
+          else
+            echo "has_package=false" >> $GITHUB_OUTPUT
+            echo "Static HTML project detected."
+          fi
+
+      - name: ⚙️ Setup Node.js
+        if: steps.check_build.outputs.has_package == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        if: steps.check_build.outputs.has_package == 'true'
+        run: npm ci
+
+      - name: 🏗️ Run Production Build
+        if: steps.check_build.outputs.has_package == 'true'
+        run: npm run build --if-present
+
+      - name: 📂 Determine Deployment Source Directory
+        id: set_source
+        run: |
+          if [ "${{ steps.check_build.outputs.has_package }}" = "true" ]; then
+            if [ -d "dist" ]; then
+              echo "source_dir=dist/" >> $GITHUB_OUTPUT
+              echo "Deployment source set to: dist/"
+            elif [ -d "build" ]; then
+              echo "source_dir=build/" >> $GITHUB_OUTPUT
+              echo "Deployment source set to: build/"
+            elif [ -d "out" ]; then
+              echo "source_dir=out/" >> $GITHUB_OUTPUT
+              echo "Deployment source set to: out/"
+            else
+              echo "source_dir=./" >> $GITHUB_OUTPUT
+              echo "Deployment source set to root: ./"
+            fi
+          else
+            echo "source_dir=./" >> $GITHUB_OUTPUT
+            echo "Deployment source set to root: ./"
+          fi
+
+      - name: 📂 Sync Files to cPanel via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ${{ steps.set_source.outputs.source_dir }}
+          server-dir: ${{ secrets.FTP_SERVER_DIR }}
+          protocol: ftp
+          port: ${{ secrets.FTP_PORT || 21 }}
+          # Exclusions prevent uploading unnecessary local files,
+          # AND protect these files/folders on the server from being deleted.
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            .cpanel/**
+            .cpanel
+            .well-known/**
+            .well-known
+            logs/**
+            logs
+            tmp/**
+            tmp
+            mail/**
+            mail
+            ssl/**
+            ssl
+            .env
+            cgi-bin/**
+            cgi-bin
+            *.zip
+            *.tar.gz
+            *.tar
+            *.rar
